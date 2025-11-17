@@ -1,22 +1,20 @@
-require('dotenv').config();
+// server.js
 const express = require('express');
-const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const PDFService = require('../services/pdfService');
-
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_API_KEY);
+const PDFDocument = require('pdfkit');
+require('dotenv').config();
 
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// Middlewares
-app.use(cors());
+// Configurar middleware
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// ============================================
-// RUTAS DE USERS
-// ============================================
-
+// Inicializar cliente de Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_API_KEY
+);
 // Crear o actualizar usuario
 app.post('/api/users', async (req, res) => {
   try {
@@ -485,146 +483,214 @@ app.get('/api/pdf/book/:book_uuid', async (req, res) => {
       return res.status(404).json({ error: 'No se encontraron fórmulas en este libro' });
     }
     
-    // Generar PDF
-    const pdfBuffer = await PDFService.generateBookFormulasPDF(book.name, formulas);
-    
-    // Enviar PDF
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="libro-${book.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf"`);
-    res.setHeader('Content-Length', pdfBuffer.length);
-    res.send(pdfBuffer);
-    
+    res.status(500).json({ error: 'Not implemented' });
   } catch (error) {
-    console.error('Error generando PDF de libro:', error);
+    console.error('Error generando PDF del libro:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Generar PDF con fórmulas personalizadas (enviar array de UUIDs)
-app.post('/api/pdf/custom', async (req, res) => {
+// Endpoint para generar PDF de una fórmula
+app.get('/api/formulas/:uuid/pdf', async (req, res) => {
   try {
-    const { formula_uuids, title } = req.body;
-    
-    if (!formula_uuids || !Array.isArray(formula_uuids) || formula_uuids.length === 0) {
-      return res.status(400).json({ error: 'Se requiere un array de formula_uuids' });
+    const { uuid } = req.params;
+
+    // Consultar la fórmula con información relacionada
+    const { data: formula, error } = await supabase
+      .from('formulas')
+      .select(`
+        *,
+        books (
+          name,
+          description
+        ),
+        users (
+          name,
+          email
+        )
+      `)
+      .eq('uuid', uuid)
+      .eq('is_deleted', false)
+      .single();
+
+    if (error) {
+      console.error('Error al consultar Supabase:', error);
+      return res.status(404).json({ error: 'Fórmula no encontrada' });
     }
-    
-    // Obtener las fórmulas
+
+    if (!formula) {
+      return res.status(404).json({ error: 'Fórmula no encontrada' });
+    }
+
+    // Crear documento PDF
+    const doc = new PDFDocument({
+      size: 'LETTER',
+      margins: { top: 50, bottom: 50, left: 50, right: 50 }
+    });
+
+    // Configurar headers para descarga
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=formula-${uuid}.pdf`
+    );
+
+    // Pipe del PDF a la respuesta
+    doc.pipe(res);
+
+    // Título del documento
+    doc.fontSize(24)
+       .font('Helvetica-Bold')
+       .text('Formulario de Fórmula', { align: 'center' })
+       .moveDown();
+
+    // Línea separadora
+    doc.moveTo(50, doc.y)
+       .lineTo(562, doc.y)
+       .stroke()
+       .moveDown();
+
+    // Información de la fórmula
+    doc.fontSize(18)
+       .font('Helvetica-Bold')
+       .text('Información de la Fórmula', { underline: true })
+       .moveDown(0.5);
+
+    doc.fontSize(12).font('Helvetica');
+
+    // Nombre
+    doc.font('Helvetica-Bold').text('Nombre: ', { continued: true })
+       .font('Helvetica').text(formula.name)
+       .moveDown(0.3);
+
+    // UUID
+    doc.font('Helvetica-Bold').text('ID Único: ', { continued: true })
+       .font('Helvetica').text(formula.uuid)
+       .moveDown(0.3);
+
+    // Fórmula
+    doc.font('Helvetica-Bold').text('Fórmula: ', { continued: true })
+       .font('Courier').text(formula.formula_text)
+       .moveDown(0.3);
+
+    // Descripción
+    if (formula.description) {
+      doc.font('Helvetica-Bold').text('Descripción: ')
+         .font('Helvetica').text(formula.description, {
+           width: 500,
+           align: 'justify'
+         })
+         .moveDown(0.3);
+    }
+
+    doc.moveDown();
+
+    // Información del libro
+    doc.fontSize(16)
+       .font('Helvetica-Bold')
+       .text('Libro', { underline: true })
+       .moveDown(0.5);
+
+    doc.fontSize(12);
+
+    doc.font('Helvetica-Bold').text('Nombre del libro: ', { continued: true })
+       .font('Helvetica').text(formula.books.name)
+       .moveDown(0.3);
+
+    if (formula.books.description) {
+      doc.font('Helvetica-Bold').text('Descripción: ')
+         .font('Helvetica').text(formula.books.description, {
+           width: 500,
+           align: 'justify'
+         })
+         .moveDown(0.3);
+    }
+
+    doc.moveDown();
+
+    // Información del usuario
+    doc.fontSize(16)
+       .font('Helvetica-Bold')
+       .text('Usuario', { underline: true })
+       .moveDown(0.5);
+
+    doc.fontSize(12);
+
+    doc.font('Helvetica-Bold').text('Nombre: ', { continued: true })
+       .font('Helvetica').text(formula.users.name)
+       .moveDown(0.3);
+
+    doc.font('Helvetica-Bold').text('Email: ', { continued: true })
+       .font('Helvetica').text(formula.users.email)
+       .moveDown();
+
+    // Fechas
+    doc.moveDown();
+    doc.fontSize(16)
+       .font('Helvetica-Bold')
+       .text('Fechas', { underline: true })
+       .moveDown(0.5);
+
+    doc.fontSize(12);
+
+    const createdDate = new Date(parseInt(formula.created_at));
+    const updatedDate = new Date(parseInt(formula.updated_at));
+
+    doc.font('Helvetica-Bold').text('Creado: ', { continued: true })
+       .font('Helvetica').text(createdDate.toLocaleString('es-ES'))
+       .moveDown(0.3);
+
+    doc.font('Helvetica-Bold').text('Actualizado: ', { continued: true })
+       .font('Helvetica').text(updatedDate.toLocaleString('es-ES'));
+
+    // Footer
+    doc.fontSize(10)
+       .font('Helvetica')
+       .text(
+         `Generado el ${new Date().toLocaleString('es-ES')}`,
+         50,
+         doc.page.height - 50,
+         { align: 'center' }
+       );
+
+    // Finalizar el documento
+    doc.end();
+
+  } catch (error) {
+    console.error('Error al generar PDF:', error);
+    res.status(500).json({ error: 'Error al generar el PDF' });
+  }
+});
+
+// Endpoint de prueba
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', message: 'API funcionando correctamente' });
+});
+
+// Listar todas las fórmulas (útil para pruebas)
+app.get('/api/formulas', async (req, res) => {
+  try {
     const { data: formulas, error } = await supabase
       .from('formulas')
-      .select('*')
-      .in('uuid', formula_uuids)
+      .select('uuid, name, description, created_at')
       .eq('is_deleted', false)
-      .order('created_at', { ascending: true });
-    
-    if (error || !formulas || formulas.length === 0) {
-      return res.status(404).json({ error: 'No se encontraron fórmulas' });
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error('Error al consultar Supabase:', error);
+      return res.status(500).json({ error: 'Error al obtener fórmulas' });
     }
-    
-    const pdfTitle = title || 'Colección Personalizada de Fórmulas';
-    
-    // Generar PDF
-    const pdfBuffer = await PDFService.generateBookFormulasPDF(pdfTitle, formulas);
-    
-    // Enviar PDF
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="formulas-personalizadas.pdf"`);
-    res.setHeader('Content-Length', pdfBuffer.length);
-    res.send(pdfBuffer);
-    
+
+    res.json({ formulas });
   } catch (error) {
-    console.error('Error generando PDF personalizado:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Error:', error);
+    res.status(500).json({ error: 'Error al obtener fórmulas' });
   }
 });
 
-// ============================================
-// RUTAS DE SALUD Y ESTADÍSTICAS
-// ============================================
-
-// Health check
-app.get('/api/health', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('users')
-      .select('count(*)')
-      .limit(1);
-    
-    if (error) throw error;
-    
-    res.json({ 
-      status: 'ok', 
-      database: 'connected',
-      timestamp: Date.now()
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      status: 'error', 
-      database: 'disconnected',
-      error: error.message 
-    });
-  }
+// Iniciar servidor
+app.listen(PORT, () => {
+  console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
+  console.log(`📄 Endpoint PDF: http://localhost:${PORT}/api/formulas/:uuid/pdf`);
 });
-
-// Estadísticas del usuario
-app.get('/api/stats/:user_id', async (req, res) => {
-  try {
-    const { user_id } = req.params;
-    
-    const booksResult = await pool.query(
-      'SELECT COUNT(*) as total FROM books WHERE user_id = $1 AND is_deleted = false',
-      [user_id]
-    );
-    
-    const formulasResult = await pool.query(
-      'SELECT COUNT(*) as total FROM formulas WHERE user_id = $1 AND is_deleted = false',
-      [user_id]
-    );
-    
-    res.json({
-      user_id,
-      total_books: parseInt(booksResult.rows[0].total),
-      total_formulas: parseInt(formulasResult.rows[0].total)
-    });
-  } catch (error) {
-    console.error('Error obteniendo estadísticas:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Ruta raíz
-app.get('/', (req, res) => {
-  res.json({ 
-    message: 'API de Fórmulas',
-    version: '1.0.0',
-    endpoints: {
-      users: '/api/users',
-      books: '/api/books',
-      formulas: '/api/formulas',
-      pdf: '/api/pdf',
-      health: '/api/health'
-    }
-  });
-});
-
-// Manejo de rutas no encontradas
-app.use((req, res) => {
-  res.status(404).json({ error: 'Ruta no encontrada' });
-});
-
-// Manejo de errores global
-app.use((err, req, res, next) => {
-  console.error('Error global:', err);
-  res.status(500).json({ error: 'Error interno del servidor' });
-});
-
-// Para desarrollo local
-if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
-  });
-}
-
-// Exportar para Vercel
-module.exports = app;
