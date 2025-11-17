@@ -1,4 +1,3 @@
-
 {
   "version": 2,
   "builds": [
@@ -12,5 +11,10 @@
       "src": "/(.*)",
       "dest": "/api/index.js"
     }
-  ]
+  ],
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "services/**"
+    }
+  }
 }
